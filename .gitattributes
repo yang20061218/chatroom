@@ -1,0 +1,9 @@
+# 统一使用 LF 行尾。
+# Windows 下如果不做限制，Git 会把文件转成 CRLF，
+# 推到 Linux 上之后 Makefile 会因为多余的回车符而报错。
+* text=auto eol=lf
+
+# 二进制文件不做转换
+*.png binary
+*.jpg binary
+*.ico binary

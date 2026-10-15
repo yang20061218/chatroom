@@ -1,0 +1,24 @@
+# 编译产物
+server
+client
+chat_server
+chat_client
+*.o
+*.out
+*.exe
+
+# 编辑器与 IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# 日志
+*.log
+
+# 本地测试脚本
+test/
