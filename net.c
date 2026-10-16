@@ -1,5 +1,4 @@
-#ifndef NET_H
-#define NET_H
+
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -132,13 +131,19 @@ int tcp_read(int fd,char* mes,int len)
 }
 int tcp_recv(int fd,char** mes)
 {
-    int meslen=0;
-    int is_four=tcp_read(fd,(char*)&meslen,4);
+    *mes=NULL;
+    uint32_t meslen=0;
+    uint32_t temp=0;
+    int is_four=tcp_read(fd,(char*)&temp,4);
     if(is_four!=4)
     {
         return -1;
     }
-    meslen=ntohl(meslen);
+    meslen=ntohl(temp);
+    if(meslen<0||meslen>64*1024)
+    {
+        return -1;
+    }
     char* buf=(char*)malloc(meslen+1);
     int res=tcp_read(fd,buf,meslen);
     if(res!=meslen)
@@ -150,4 +155,3 @@ int tcp_recv(int fd,char** mes)
     *mes=buf;
     return meslen;
 }
-#endif 

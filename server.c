@@ -54,6 +54,7 @@ void* sendtoall_thread(void* arg)
                 tcp_send(clientfds_copy[i],temp,strlen(temp));
             }
             free(read_buf);  
+            read_buf=NULL;
         }
     }
     int clientfds_copy[MAX_CLIENTS];

@@ -1,3 +1,5 @@
+#ifndef NET_H
+#define NET_H
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -23,3 +25,4 @@ int tcp_send(int fd,char *buf,int len);
 int tcp_write(int fd,char *buf,int len);
 int tcp_read(int fd,char* mes,int len);
 int tcp_recv(int fd,char** buf);
+#endif 
