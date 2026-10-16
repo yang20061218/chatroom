@@ -7,100 +7,62 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <unistd.h>
-#include <signal.h>
-#include <errno.h>
-#include <stdint.h>
-
-void *read_thread(void *arg)
+#include<signal.h>
+#include<errno.h>
+#include"net.h"
+void* read_thread(void* arg)
 {
     int client_fd = (int)(intptr_t)arg;
-    char buf[1024];
+    char *buf=NULL;
     ssize_t len;
-
-    while (1)
-    {
-        memset(buf, 0, sizeof(buf));
-        len = recv(client_fd, buf, sizeof(buf) - 1, 0);
-
-        if (len == 0) break;                    /* 服务端关闭了连接 */
-        if (len < 0)
-        {
-            if (errno == EINTR) continue;       /* 被信号打断，重试 */
-            perror("recv");
-            break;                              /* 真正的错误 */
-        }
-
-        buf[len] = '\0';
+    while (1) {           
+        len = tcp_recv(client_fd,&buf);
+        if (len <=0) {
+            free(buf);
+            printf("server ask to close\n");
+            break;
+        }                 
         fputs(buf, stdout);
         fflush(stdout);
+        free(buf);
+        buf=NULL;
+                               
     }
 
-    printf("server ask to close\n");
     return NULL;
 }
 
-void *write_thread(void *arg)
+void* write_thread(void* arg)
 {
     int client_fd = (int)(intptr_t)arg;
-    char buf[1024];
+    char buf[1200];
 
-    while (fgets(buf, sizeof(buf), stdin) != NULL)
-    {
-        ssize_t len = send(client_fd, buf, strlen(buf), 0);
-        if (len < 0)
-        {
+    while (fgets(buf, sizeof(buf), stdin) != NULL) {
+        int len = tcp_send(client_fd, buf, strlen(buf));  
+        if(len==0){
+            printf("recive stop flag, stop send to server\n");
+            break;
+        }
+        if (len < 0) {
             perror("send");
             break;
         }
     }
-
-    printf("stdin closed, stop sending to server\n");
     shutdown(client_fd, SHUT_WR);
     return NULL;
 }
 
-int main(void)
+int main()
 {
-    signal(SIGPIPE, SIG_IGN);
-
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-
-    server_addr.sin_family = AF_INET;
-    inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
-    server_addr.sin_port = htons(7777);
-
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0)
-    {
-        perror("socket");
-        exit(EXIT_FAILURE);
+    int sockfd=tcp_connect("127.0.0.1",7777);
+    if (sockfd < 0) {                  
+    perror("tcp_connect");
+    exit(EXIT_FAILURE);
     }
-
-    if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
-    {
-        perror("connect");
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
-
-    char ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &server_addr.sin_addr, ip, sizeof(ip));
-    printf("connect server ip:%s port:%d\n", ip, ntohs(server_addr.sin_port));
-
+    printf("connect server ip: 127.0.0.1 port:7777\n");
     pthread_t pid_read, pid_write;
-    if (pthread_create(&pid_read, NULL, read_thread, (void *)(intptr_t)sockfd) != 0)
-    {
-        perror("pthread_create");
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
-    if (pthread_create(&pid_write, NULL, write_thread, (void *)(intptr_t)sockfd) != 0)
-    {
-        perror("pthread_create");
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
+    pthread_create(&pid_read, NULL, read_thread, (void*)(intptr_t)sockfd);
+    pthread_create(&pid_write, NULL, write_thread, (void*)(intptr_t)sockfd);
 
     pthread_join(pid_read, NULL);
     pthread_join(pid_write, NULL);
