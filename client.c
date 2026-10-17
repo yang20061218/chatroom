@@ -10,35 +10,43 @@
 #include<signal.h>
 #include<errno.h>
 #include"net.h"
+#include"protocol.h"
 void* read_thread(void* arg)
 {
     int client_fd = (int)(intptr_t)arg;
     char *buf=NULL;
     ssize_t len;
+    uint16_t cmd;
     while (1) {           
-        len = tcp_recv(client_fd,&buf);
+        len = protocol_recv(client_fd,&buf,&cmd);
         if (len <=0) {
             free(buf);
             printf("server ask to close\n");
             break;
-        }                 
-        fputs(buf, stdout);
-        fflush(stdout);
+        }
+        switch (cmd)
+        {
+        case CMD_CHAT:
+            fputs(buf, stdout);
+            fflush(stdout);         
+            break;  
+        default:
+            break;
+        }    
         free(buf);
-        buf=NULL;
-                               
+        buf=NULL;                             
     }
-
     return NULL;
 }
-
 void* write_thread(void* arg)
 {
     int client_fd = (int)(intptr_t)arg;
     char buf[1200];
-
     while (fgets(buf, sizeof(buf), stdin) != NULL) {
-        int len = tcp_send(client_fd, buf, strlen(buf));  
+        if (strcmp(buf, "\n") == 0) {
+        continue;                   
+    }
+        int len = protocol_send(client_fd,CMD_CHAT,buf);  
         if(len==0){
             printf("recive stop flag, stop send to server\n");
             break;
@@ -60,6 +68,36 @@ int main()
     exit(EXIT_FAILURE);
     }
     printf("connect server ip: 127.0.0.1 port:7777\n");
+    char name[MAX_NAMELEN];
+    printf("please put in your name\n");
+    scanf("%31s", name);
+    char c;
+    while ((c = getchar()) != '\n' && c != EOF) { }
+    protocol_send(sockfd,CMD_LOGIN,name);
+    
+    
+    char* resp=NULL;
+    uint16_t cmd;
+    int res=protocol_recv(sockfd,&resp,&cmd);
+    if (res< 0) {                              
+    printf("time over\n");
+    free(resp);
+    close(sockfd);
+    return 1;
+}
+
+    if (cmd != CMD_LOGIN_RES || strncmp(resp, "login success", 13) != 0) {
+    printf("log in failed: %s\n", resp ? resp : "");   
+    free(resp);
+    close(sockfd);
+    return 1;
+}
+    free(resp);
+    printf("log in successs\n");
+
+
+
+
     pthread_t pid_read, pid_write;
     pthread_create(&pid_read, NULL, read_thread, (void*)(intptr_t)sockfd);
     pthread_create(&pid_write, NULL, write_thread, (void*)(intptr_t)sockfd);

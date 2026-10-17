@@ -10,81 +10,198 @@
 #include<signal.h>
 #include<errno.h>
 #include"net.h"
+#include"protocol.h"
 
 #define MAX_CLIENTS 2000
 
+typedef struct
+{
+    int  fd;
+    char name[MAX_NAMELEN];
+    int is_log;
 
-int clientfds[MAX_CLIENTS]={0};
+}client;
+
+client clients[MAX_CLIENTS];
 int clientnum=0;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-
-
-void* sendtoall_thread(void* arg)
+int broadcast(char* mes)
 {
-    char *read_buf=NULL;
-    int clientfd=(int)(intptr_t)arg;
-    ssize_t read_len;
-    while(1)
+    if(mes==NULL)
     {
-        read_len=tcp_recv(clientfd,&read_buf);
-        if (read_len<=0) {
-            free(read_buf);
-            break;
-        }
-        else
-        {
-            int clientfds_copy[MAX_CLIENTS];
-            int clientnum_copy;
-            char temp[1300];
-            snprintf(temp, sizeof(temp), "[client%d] : %s\n",clientfd,read_buf);
-
-            pthread_mutex_lock(&mutex);
-            for(int i=0;i<clientnum;i++)
-            {
-                clientfds_copy[i]=clientfds[i];
-            }
-            clientnum_copy=clientnum;
-            pthread_mutex_unlock(&mutex);
-            for(int i=0;i<clientnum_copy;i++)
-            {
-                if(clientfds_copy[i] == clientfd)
-                {
-                    continue;
-                }
-                tcp_send(clientfds_copy[i],temp,strlen(temp));
-            }
-            free(read_buf);  
-            read_buf=NULL;
-        }
+        return -1;
     }
     int clientfds_copy[MAX_CLIENTS];
     int clientnum_copy;
-    
     pthread_mutex_lock(&mutex);
     for(int i=0;i<clientnum;i++){
-        clientfds_copy[i]=clientfds[i];
+        if(clients[i].is_log) clientfds_copy[i]=clients[i].fd;
     }
     clientnum_copy=clientnum;
+    pthread_mutex_unlock(&mutex);
+    for(int i=0;i<clientnum_copy;i++)
+    {
+        protocol_send(clientfds_copy[i],CMD_CHAT,mes);
+    }
+    return 0;
+}
+int broadcast_nomyself(char* mes,int fd_myself)
+{
+    if(mes==NULL)
+    {
+        return -1;
+    }
+    int clientfds_copy[MAX_CLIENTS];
+    int clientnum_copy;
+    pthread_mutex_lock(&mutex);
     for(int i=0;i<clientnum;i++){
-        if(clientfds[i] == clientfd ){
-            clientfds[i]=0;
+        if(clients[i].is_log) clientfds_copy[i]=clients[i].fd;
+    }
+    clientnum_copy=clientnum;
+    pthread_mutex_unlock(&mutex);
+    for(int i=0;i<clientnum_copy;i++)
+    {
+        if(clientfds_copy[i]==fd_myself) continue;
+        protocol_send(clientfds_copy[i],CMD_CHAT,mes);
+    }
+    return 0;
+}
+int client_delet(int fd)
+{
+    int pos=-1;
+    pthread_mutex_lock(&mutex);
+    for(int i=0;i<clientnum;i++){
+        if(clients[i].fd == fd ){
+            pos =i;
+            clients[i].fd = 0;
             for(int p=i+1;p<clientnum;p++){
-                clientfds[p-1]=clientfds[p];
+                clients[p-1]=clients[p];
             }
-            clientfds[clientnum-1]=0;
+            memset(&clients[clientnum-1], 0, sizeof(client));
             clientnum--;
             break;
         }
     }
     pthread_mutex_unlock(&mutex);
-    char temp[256];
-    snprintf(temp, sizeof(temp), "------client %d exit------\n",clientfd);
-    int len=strlen(temp);
-    for(int j=0;j<clientnum_copy;j++){
-    if(clientfds_copy[j]==clientfd) continue;
-    tcp_send(clientfds_copy[j],temp,len);
+    return pos;
 }
+int getname(int fd,char* name)
+{
+    name[0]='\0';
+    pthread_mutex_lock(&mutex);
+    for(int i=0;i<clientnum;i++){
+        if(clients[i].fd==fd)
+        {
+            snprintf(name, MAX_NAMELEN, "%s", clients[i].name);
+            break;
+        }    
+    }
+    name[MAX_NAMELEN-1]='\0';
+    pthread_mutex_unlock(&mutex);
+    return 0;
+}
+int login(int fd,char* name)
+{
+    if(name==NULL||strlen(name)>=MAX_NAMELEN) 
+    {
+        return -1;
+    }
+    pthread_mutex_lock(&mutex);
+    int pos=-1;
+     for(int i=0;i<clientnum;i++){
+        if(clients[i].fd==fd) pos=i;
+    }
+    for(int i=0;i<clientnum;i++){
+        if (i == pos) continue;
+        if (!clients[i].is_log) continue;
+        if(strcmp(clients[i].name,name)==0)
+        {
+            pthread_mutex_unlock(&mutex);
+            return -1;
+        }    
+    }
+    if(pos==-1) {
+        pthread_mutex_unlock(&mutex);
+        return -1;
+    }
+    strncpy(clients[pos].name,name,MAX_NAMELEN);
+    clients[pos].name[MAX_NAMELEN-1]='\0';
+    clients[pos].is_log = 1;    
+    pthread_mutex_unlock(&mutex);
+    return strlen(name);
+}
+void* sendtoall_thread(void* arg)
+{
+    char *read_buf=NULL;
+    int clientfd=(int)(intptr_t)arg;
+    ssize_t read_len;
+    uint16_t cmd; 
+    char name[MAX_NAMELEN]={0};
+    while(1)
+    {
+        read_len=protocol_recv(clientfd,&read_buf,&cmd);
+        if (read_len<0) {
+            free(read_buf);
+            break;
+        }
+        else if(read_len==0){
+            
+        }
+        else
+        {
+            switch (cmd)
+            {
+            case CMD_CHAT:
+                {
+                    int logged = 0;
+                    pthread_mutex_lock(&mutex);
+                    for (int i = 0; i < clientnum; i++) {
+                    if (clients[i].fd == clientfd) { 
+                        logged = clients[i].is_log; 
+                        break;
+                    }
+                    }
+                    pthread_mutex_unlock(&mutex);
+                    if (!logged) break;
+
+
+                char temp[MES_MAX+64];
+                getname(clientfd,name);
+                snprintf(temp, sizeof(temp), "[%s] : %s\n",name,read_buf);
+                broadcast_nomyself(temp,clientfd);
+                break;
+                }
+            case CMD_LOGIN:
+                if(login(clientfd,read_buf)>0)
+                {
+                    protocol_send(clientfd,CMD_LOGIN_RES,"login success");
+                }
+                else
+                {
+                    protocol_send(clientfd,CMD_LOGIN_RES,"login failed,please try again");
+                }
+                break;
+            case CMD_HEART:
+                break;
+            case CMD_EXIT:
+            free(read_buf);
+                goto done;
+            default:
+            free(read_buf);
+                goto done;
+            }   
+            free(read_buf);      
+        }
+    }
+    done:
+    getname(clientfd,name);
+    client_delet(clientfd);
     close(clientfd);
+    if(name[0]!='\0'){
+        char temp[256];
+        snprintf(temp, sizeof(temp), "------%s exit------\n",name);
+        broadcast(temp);
+    }
     return NULL;
 }
 int main()
@@ -112,12 +229,12 @@ int main()
             pthread_mutex_unlock(&mutex);          
             continue;             
         }
-        clientfds[clientnum++]=fd;
+        clients[clientnum++].fd = fd;
         pthread_mutex_unlock(&mutex);
+
         pthread_create(&pid_sendtoall,NULL,sendtoall_thread,(void*)(intptr_t)fd);
         pthread_detach(pid_sendtoall);
     }
-
     close(serverfd);
     return 0;
 }
