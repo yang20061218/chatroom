@@ -71,7 +71,7 @@ int main()
     char name[MAX_NAMELEN];
     printf("please put in your name\n");
     scanf("%31s", name);
-    char c;
+    int c;
     while ((c = getchar()) != '\n' && c != EOF) { }
     protocol_send(sockfd,CMD_LOGIN,name);
     

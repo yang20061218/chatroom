@@ -27,42 +27,42 @@ int clientnum=0;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 int broadcast(char* mes)
 {
-    if(mes==NULL)
-    {
-        return -1;
-    }
+    if (mes == NULL) return -1;
+
     int clientfds_copy[MAX_CLIENTS];
-    int clientnum_copy;
+    int n = 0;
+
     pthread_mutex_lock(&mutex);
-    for(int i=0;i<clientnum;i++){
-        if(clients[i].is_log) clientfds_copy[i]=clients[i].fd;
+    for (int i = 0; i < clientnum; i++) {
+        if (clients[i].is_log) {
+            clientfds_copy[n++] = clients[i].fd;      
+        }
     }
-    clientnum_copy=clientnum;
     pthread_mutex_unlock(&mutex);
-    for(int i=0;i<clientnum_copy;i++)
-    {
-        protocol_send(clientfds_copy[i],CMD_CHAT,mes);
+    for (int i = 0; i < n; i++) {                 
+        protocol_send(clientfds_copy[i], CMD_CHAT, mes);
     }
     return 0;
 }
-int broadcast_nomyself(char* mes,int fd_myself)
+
+int broadcast_nomyself(char* mes, int fd_myself)
 {
-    if(mes==NULL)
-    {
-        return -1;
-    }
+    if (mes == NULL) return -1;
+
     int clientfds_copy[MAX_CLIENTS];
-    int clientnum_copy;
+    int n = 0;
+
     pthread_mutex_lock(&mutex);
-    for(int i=0;i<clientnum;i++){
-        if(clients[i].is_log) clientfds_copy[i]=clients[i].fd;
+    for (int i = 0; i < clientnum; i++) {
+        if (clients[i].is_log) {
+            clientfds_copy[n++] = clients[i].fd;
+        }
     }
-    clientnum_copy=clientnum;
     pthread_mutex_unlock(&mutex);
-    for(int i=0;i<clientnum_copy;i++)
-    {
-        if(clientfds_copy[i]==fd_myself) continue;
-        protocol_send(clientfds_copy[i],CMD_CHAT,mes);
+
+    for (int i = 0; i < n; i++) {
+        if (clientfds_copy[i] == fd_myself) continue;
+        protocol_send(clientfds_copy[i], CMD_CHAT, mes);
     }
     return 0;
 }
@@ -145,7 +145,8 @@ void* sendtoall_thread(void* arg)
             break;
         }
         else if(read_len==0){
-            
+             free(read_buf);
+            read_buf = NULL;
         }
         else
         {
