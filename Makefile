@@ -1,45 +1,67 @@
 # 聊天室项目
 #
-#   make                  编译出 server 和 client
-#   make test_protocol    编译单元测试程序
-#   make clean            删掉所有编译产物
-#   make rebuild          重新编译
-#   make WERROR=-Werror   严格模式，有告警就编译失败
+#   make                 编译 server 和 client（默认严格：告警即错误）
+#   make WERROR=         临时放宽，告警不再中断编译
+#   make check           一次性列出所有错误（不会停在第一个）
+#   make asan            编译到 build-asan/ 目录，不影响普通版
+#   make test_protocol   编译单元测试
+#   make clean           删除所有编译产物
+#   make rebuild         重新编译
 #
 # 规则行必须以制表符开头。如果用编辑器改这个文件，
 # 要确认那一行是 Tab 而不是空格，否则会报 "missing separator"。
 
 CC      := gcc
 LDFLAGS := -lpthread
-WERROR  ?=
-CFLAGS  := -Wall -Wextra $(WERROR) -g
 
-SERVER  := server
-CLIENT  := client
-TEST    := test_protocol
+# 默认就把告警当错误。想临时关掉：make WERROR=
+WERROR  ?= -Werror
+
+# 想加额外检查时用，例如：make EXTRA="-Wshadow -Wconversion"
+EXTRA   ?=
+
+CFLAGS  := -std=gnu11 -Wall -Wextra $(WERROR) $(EXTRA) -g
+
+SERVER     := server
+CLIENT     := client
+TEST       := test_protocol
+ASAN_DIR   := build-asan
+ASAN_FLAGS := -O1 -fsanitize=address,undefined -fno-omit-frame-pointer
 
 all: $(SERVER) $(CLIENT)
 
-# 两个可执行文件都依赖 net.o 和 protocol.o，链接时必须带上，
-# 否则会报 undefined reference to 'tcp_listen' / 'proto_pack'
 $(SERVER): $(SERVER).o net.o protocol.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(CLIENT): $(CLIENT).o net.o protocol.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# 单元测试只依赖 protocol.o，不碰网络
 $(TEST): $(TEST).o protocol.o
 	$(CC) $(CFLAGS) -o $@ $^
 
-# 头文件也列进来：头文件改了，相关的 .o 要重新编译，
-# 否则会出现"头文件改了但程序行为没变"的怪事
 %.o: %.c net.h protocol.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# 一次性看到所有错误：-k 让 make 遇到错误也继续，
+# 然后把 gcc 命令行过滤掉，只留报错和告警
+check:
+	@$(MAKE) -k all 2>&1 | grep -E "error:|warning:|Error [0-9]|undefined reference" || echo "===== 没有错误 ====="
+
+# ASan 版编到单独目录，直接用 .c 一遍编完，不产生混用的 .o
+# 这样在 make 和 make asan 之间来回切，永远不会冲突
+asan:
+	@mkdir -p $(ASAN_DIR)
+	$(CC) $(CFLAGS) $(ASAN_FLAGS) -o $(ASAN_DIR)/$(SERVER) server.c net.c protocol.c $(LDFLAGS)
+	$(CC) $(CFLAGS) $(ASAN_FLAGS) -o $(ASAN_DIR)/$(CLIENT) client.c net.c protocol.c $(LDFLAGS)
+	@echo ""
+	@echo "ASan 版编好了："
+	@echo "  ./$(ASAN_DIR)/$(SERVER)"
+	@echo "  ./$(ASAN_DIR)/$(CLIENT)"
+
 clean:
 	rm -f *.o $(SERVER) $(CLIENT) $(TEST)
+	rm -rf $(ASAN_DIR)
 
 rebuild: clean all
 
-.PHONY: all clean rebuild
+.PHONY: all check asan clean rebuild

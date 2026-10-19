@@ -43,8 +43,7 @@ int protocol_unpack(char*mes,int meslen,uint16_t *cmd,uint32_t* len)
     uint32_t templen;
     memcpy(&templen,buf+7,4);
     *len=ntohl(templen);
-
-    return 0;
+    return 1;
 }
 int protocol_write(int fd,char* buf,int len)
 {
@@ -69,7 +68,7 @@ int protocol_send(int fd, uint16_t cmd,char *mes)
     if(len<0) return -1;
     int res=protocol_write(fd,mes,len);
     free(mes);
-    return  res;
+    return  res;//len of mes+head
 }
 int protocol_read(int fd,char* mes,int len)
 {
@@ -115,5 +114,5 @@ int protocol_recv(int fd,char** mes,uint16_t* cmd1)
     }
     buf[len]='\0';
     *mes=buf;
-    return len;
+    return len+HEAD_LEN;
 }

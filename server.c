@@ -11,6 +11,7 @@
 #include<errno.h>
 #include"net.h"
 #include"protocol.h"
+#include<time.h>
 
 #define MAX_CLIENTS 2000
 
@@ -19,6 +20,7 @@ typedef struct
     int  fd;
     char name[MAX_NAMELEN];
     int is_log;
+    time_t last_active;
 
 }client;
 
@@ -159,6 +161,7 @@ void* sendtoall_thread(void* arg)
                     for (int i = 0; i < clientnum; i++) {
                     if (clients[i].fd == clientfd) { 
                         logged = clients[i].is_log; 
+                        if(logged) clients[i].last_active=time(NULL);
                         break;
                     }
                     }
@@ -183,6 +186,16 @@ void* sendtoall_thread(void* arg)
                 }
                 break;
             case CMD_HEART:
+                pthread_mutex_lock(&mutex);
+                for(int i=0;i<clientnum;i++)
+                {
+                    if(clients[i].fd==clientfd)
+                    {
+                        clients[i].last_active=time(NULL);
+                        break;
+                    }
+                }
+                pthread_mutex_unlock(&mutex);
                 break;
             case CMD_EXIT:
             free(read_buf);
@@ -205,6 +218,28 @@ void* sendtoall_thread(void* arg)
     }
     return NULL;
 }
+void* checkheartbeat_thread(void* arg)
+{
+    
+    (void)arg;
+    while(1){
+    pthread_mutex_lock(&mutex);
+    for(int i=0;i<clientnum;i++)
+    {
+        if(time(NULL)-clients[i].last_active>30&&clients[i].is_log)
+        {
+            shutdown(clients[i].fd,SHUT_RDWR);
+        }
+        else if(time(NULL)-clients[i].last_active>60&&!clients[i].is_log)
+        {
+            shutdown(clients[i].fd,SHUT_RDWR);
+        }
+    }
+    pthread_mutex_unlock(&mutex);
+    sleep(5);
+}
+    return NULL;
+}
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
@@ -213,6 +248,9 @@ int main()
     {
         exit(EXIT_FAILURE);
     }
+    pthread_t pid_checkheartbeat;
+    pthread_create(&pid_checkheartbeat,NULL,checkheartbeat_thread,NULL);
+    pthread_detach(pid_checkheartbeat);
     while(1)
     {
         pthread_t pid_sendtoall;
@@ -225,12 +263,14 @@ int main()
         pthread_mutex_lock(&mutex);
         if(clientnum>=MAX_CLIENTS)
         {
-            fprintf(stderr, "连接数已满，拒绝新连接 fd=%d\n", fd);
+            fprintf(stderr, "system is full,refuse client: fd=%d\n", fd);
             close(fd); 
             pthread_mutex_unlock(&mutex);          
             continue;             
         }
-        clients[clientnum++].fd = fd;
+        clients[clientnum].fd = fd;
+        clients[clientnum].last_active=time(NULL);
+        clientnum++;
         pthread_mutex_unlock(&mutex);
 
         pthread_create(&pid_sendtoall,NULL,sendtoall_thread,(void*)(intptr_t)fd);

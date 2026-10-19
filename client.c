@@ -36,6 +36,7 @@ void* read_thread(void* arg)
         free(buf);
         buf=NULL;                             
     }
+    shutdown(client_fd,SHUT_RD);
     return NULL;
 }
 void* write_thread(void* arg)
@@ -59,7 +60,16 @@ void* write_thread(void* arg)
     shutdown(client_fd, SHUT_WR);
     return NULL;
 }
-
+void* heartbeat_thread(void* arg)
+{
+    char* empty="";
+    while(1){
+        int client_fd = (int)(intptr_t)arg;
+        if(protocol_send(client_fd,CMD_HEART,empty)<0) break;
+        sleep(10);
+    }
+return NULL;
+}
 int main()
 {
     int sockfd=tcp_connect("127.0.0.1",7777);
@@ -70,7 +80,12 @@ int main()
     printf("connect server ip: 127.0.0.1 port:7777\n");
     char name[MAX_NAMELEN];
     printf("please put in your name\n");
-    scanf("%31s", name);
+    if(scanf("%31s", name)!=1)
+    {
+        printf("recive no name");
+        close(sockfd);
+        return 1;    
+    }
     int c;
     while ((c = getchar()) != '\n' && c != EOF) { }
     protocol_send(sockfd,CMD_LOGIN,name);
@@ -80,7 +95,7 @@ int main()
     uint16_t cmd;
     int res=protocol_recv(sockfd,&resp,&cmd);
     if (res< 0) {                              
-    printf("time over\n");
+    printf("server closed the connectio\n");
     free(resp);
     close(sockfd);
     return 1;
@@ -98,10 +113,12 @@ int main()
 
 
 
-    pthread_t pid_read, pid_write;
+    pthread_t pid_read, pid_write,pid_heartbeat;
     pthread_create(&pid_read, NULL, read_thread, (void*)(intptr_t)sockfd);
     pthread_create(&pid_write, NULL, write_thread, (void*)(intptr_t)sockfd);
-
+    pthread_create(&pid_heartbeat, NULL,heartbeat_thread, (void*)(intptr_t)sockfd);
+    
+    pthread_detach(pid_heartbeat);
     pthread_join(pid_read, NULL);
     pthread_join(pid_write, NULL);
 
