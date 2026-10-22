@@ -120,6 +120,9 @@ gcc -Wall -Wextra -g -o client client.c net.c protocol.c -lpthread
 
 ```text
 .
+├── README.md         项目总说明
+├── .gitignore        Git 忽略规则
+├── .gitattributes    Git 换行规则
 ├── server.c          当前 epoll 服务端
 ├── client.c          客户端
 ├── net.c             网络基础函数
@@ -136,8 +139,11 @@ gcc -Wall -Wextra -g -o client client.c net.c protocol.c -lpthread
     ├── protocol.c
     ├── protocol.h
     ├── Makefile
-    └── test_sticky.py
+    ├── test_sticky.py
+    └── README.md
 ```
+
+每个文件的职责都在上面的目录说明和 [multithread/README.md](multithread/README.md) 中列出。
 
 ## epoll 服务端设计
 
