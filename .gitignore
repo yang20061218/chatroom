@@ -1,3 +1,5 @@
+# 根目录运行 epoll 主版本；multithread/ 保留历史实现。
+
 # 编译产物
 server
 client
@@ -19,6 +21,10 @@ chat_client
 
 # 日志
 *.log
+
+# Python 缓存
+__pycache__/
+*.pyc
 
 # 本地测试脚本
 test/

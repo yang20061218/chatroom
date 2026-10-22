@@ -1,4 +1,7 @@
-
+/*
+ * TCP socket helpers shared by the current epoll server and the legacy
+ * multithread implementation.
+ */
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -74,80 +77,3 @@ int tcp_connect(const char* ip,int port)
     }
     return sockfd;
 }
-// int tcp_write(int fd,char *buf,int len)
-// {
-//     char * temp=buf;
-//     int left=len;
-//     while(left>0)
-//     {
-//         int send_len = send(fd,temp,left,0);
-//         if (send_len <= 0) {
-//             if (errno == EINTR) continue;
-//             return -1;
-//         }
-//         temp+=send_len;
-//         left-=send_len;
-//     }
-//     return len;
-// }
-// int tcp_send(int fd,char *buf,int len)
-// {
-//     char * mes=(char*)malloc(len+4);
-//     int head=htonl(len);
-//     memcpy(mes,&head,4);
-//     memcpy(mes+4,buf,len);
-//     int res=tcp_write(fd,mes,len+4);
-//     free(mes);
-//     if(res<0)
-//     {
-//         return -1;
-//     }
-//     return len;
-// }
-// int tcp_read(int fd,char* mes,int len)
-// {
-//     int left=len;
-//     char* pos=mes;
-//     while(left>0)
-//     {
-//         int read_len=recv(fd,pos,left,0);
-//         if(read_len==0)
-//         {
-//             return len-left;
-//         }
-//         if(read_len<0)
-//         {
-//             if(errno==EINTR) continue;
-//             return -1;
-//         }
-//         pos+=read_len;
-//         left-=read_len;
-//     }
-//     return len;
-// }
-// int tcp_recv(int fd,char** mes)
-// {
-//     *mes=NULL;
-//     uint32_t meslen=0;
-//     uint32_t temp=0;
-//     int is_four=tcp_read(fd,(char*)&temp,4);
-//     if(is_four!=4)
-//     {
-//         return -1;
-//     }
-//     meslen=ntohl(temp);
-//     if(meslen>64*1024)
-//     {
-//         return -1;
-//     }
-//     char* buf=(char*)malloc(meslen+1);
-//     int res=tcp_read(fd,buf,meslen);
-//     if(res!=meslen)
-//     {
-//         free(buf);
-//         return -1;
-//     }
-//     buf[meslen]='\0';
-//     *mes=buf;
-//     return meslen;
-// }

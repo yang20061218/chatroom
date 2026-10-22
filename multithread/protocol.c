@@ -1,3 +1,7 @@
+/*
+ * Shared 11-byte application protocol for the archived multithread build.
+ * Socket helpers are blocking and must not be used by the epoll event loop.
+ */
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -10,7 +14,6 @@
 #include<signal.h>
 #include<errno.h>
 #include"protocol.h"
-//head = magic(4) + version(1) + cmd(2) + length(4)
 
 int protocol_pack(char** mes,uint16_t cmd)
 {

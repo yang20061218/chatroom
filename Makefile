@@ -1,10 +1,9 @@
-# 聊天室项目
+# 当前 epoll 聊天室构建
 #
 #   make                 编译 server 和 client（默认严格：告警即错误）
 #   make WERROR=         临时放宽，告警不再中断编译
 #   make check           一次性列出所有错误（不会停在第一个）
 #   make asan            编译到 build-asan/ 目录，不影响普通版
-#   make test_protocol   编译单元测试
 #   make clean           删除所有编译产物
 #   make rebuild         重新编译
 #
@@ -24,7 +23,6 @@ CFLAGS  := -std=gnu11 -Wall -Wextra $(WERROR) $(EXTRA) -g
 
 SERVER     := server
 CLIENT     := client
-TEST       := test_protocol
 ASAN_DIR   := build-asan
 ASAN_FLAGS := -O1 -fsanitize=address,undefined -fno-omit-frame-pointer
 
@@ -35,9 +33,6 @@ $(SERVER): $(SERVER).o net.o protocol.o
 
 $(CLIENT): $(CLIENT).o net.o protocol.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-$(TEST): $(TEST).o protocol.o
-	$(CC) $(CFLAGS) -o $@ $^
 
 %.o: %.c net.h protocol.h
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -59,7 +54,7 @@ asan:
 	@echo "  ./$(ASAN_DIR)/$(CLIENT)"
 
 clean:
-	rm -f *.o $(SERVER) $(CLIENT) $(TEST)
+	rm -f *.o $(SERVER) $(CLIENT)
 	rm -rf $(ASAN_DIR)
 
 rebuild: clean all

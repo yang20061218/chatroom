@@ -1,3 +1,4 @@
+/* Shared 11-byte application protocol constants and declarations. */
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 #include <sys/socket.h>
@@ -12,7 +13,8 @@
 #include<signal.h>
 #include<errno.h>
 #include<stdint.h>
-//cmd: 1:denglu 2:duankai 3:
+
+/* Commands: chat=1, exit=2, heartbeat=3, login=4, login response=5. */
 #define VERSION 1
 #define HEAD_LEN 11
 
@@ -31,4 +33,4 @@ int protocol_recv(int fd,char** mes,uint16_t* cmd1);
 int protocol_pack(char** mes,uint16_t cmd);
 int protocol_unpack(char*mes,int meslen,uint16_t *cmd,uint32_t* len);
 
-#endif 
+#endif

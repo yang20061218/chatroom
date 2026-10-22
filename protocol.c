@@ -1,3 +1,9 @@
+/*
+ * Shared 11-byte application protocol.
+ * Header: magic(4) + version(1) + cmd(2) + length(4).
+ * The socket helpers are blocking and are intended for the client or the
+ * legacy multithread server; the epoll server uses only pack/unpack.
+ */
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -10,7 +16,6 @@
 #include<signal.h>
 #include<errno.h>
 #include"protocol.h"
-//head = magic(4) + version(1) + cmd(2) + length(4)
 
 int protocol_pack(char** mes,uint16_t cmd)
 {

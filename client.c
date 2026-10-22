@@ -1,3 +1,7 @@
+/*
+ * Blocking chat client.
+ * Performs the login handshake, then runs read, write and heartbeat threads.
+ */
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>

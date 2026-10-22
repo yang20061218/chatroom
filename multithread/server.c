@@ -1,3 +1,7 @@
+/*
+ * Legacy multithread chat server.
+ * One reader thread per client; kept for comparison with the epoll server.
+ */
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>

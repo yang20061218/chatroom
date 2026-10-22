@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """
-粘包测试脚本 —— 验证服务端的消息边界处理
+粘包和半包回归测试，当前 11 字节协议。
+
+协议头：
+    magic(4) + version(1) + cmd(2) + length(4)
+
+运行前先启动服务端，并在另一个终端登录一个普通客户端观察广播。
 
 用法：
-    python3 test_sticky.py          依次跑全部用例
-    python3 test_sticky.py 1        只跑第 1 个用例
-
-协议：4 字节大端长度 + 正文
-
-跑之前先开一个正常的客户端，用它观察广播结果。
+    python3 test_sticky.py
+    python3 test_sticky.py 1
 """
 
+import os
 import socket
 import struct
 import sys
@@ -19,76 +21,129 @@ import time
 HOST = "127.0.0.1"
 PORT = 7777
 
+MAGIC = b"1218"
+VERSION = 1
+HEAD_LEN = 11
 
-def connect():
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect((HOST, PORT))
-    time.sleep(0.3)
-    return s
+CMD_CHAT = 1
+CMD_HEART = 3
+CMD_LOGIN = 4
+CMD_LOGIN_RES = 5
 
 
-def pack(text):
-    """按协议打包：4 字节大端长度 + UTF-8 正文"""
-    body = text.encode("utf-8")
-    return struct.pack("!I", len(body)) + body
+def recv_exact(sock, size):
+    data = b""
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise ConnectionError("connection closed")
+        data += chunk
+    return data
+
+
+def recv_frame(sock):
+    header = recv_exact(sock, HEAD_LEN)
+    if header[:4] != MAGIC:
+        raise ValueError("bad magic")
+    if header[4] != VERSION:
+        raise ValueError("bad version")
+    cmd, length = struct.unpack("!HI", header[5:11])
+    body = recv_exact(sock, length)
+    return cmd, body
+
+
+def pack(cmd, body):
+    if isinstance(body, str):
+        body = body.encode("utf-8")
+    return MAGIC + bytes([VERSION]) + struct.pack("!HI", cmd, len(body)) + body
+
+
+def unique_name(prefix):
+    suffix = f"{int(time.time() * 1000) % 1000000:06d}"
+    return f"{prefix}{suffix}"[:31]
+
+
+def connect(name):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(3)
+    sock.connect((HOST, PORT))
+    sock.sendall(pack(CMD_LOGIN, name))
+
+    cmd, body = recv_frame(sock)
+    if cmd != CMD_LOGIN_RES or body == b"no":
+        sock.close()
+        raise RuntimeError(f"login failed: {body!r}")
+    return sock
 
 
 def case1_two_messages_one_send():
-    print("用例 1：两条消息粘在一起，一次 send 发出")
-    s = connect()
-    s.sendall(pack("aaa") + pack("bbb"))
-    time.sleep(2)
-    s.close()
-    print("  预期：观察端看到两行，各自带自己的 [clientN] 前缀")
-    print("        错误的实现会把它们拼成一条，第二个前缀不见了")
+    print("用例 1：两帧聊天消息一次发送")
+    sock = connect(unique_name("sticky"))
+    sock.sendall(pack(CMD_CHAT, "aaa") + pack(CMD_CHAT, "bbb"))
+    time.sleep(1)
+    sock.close()
+    print("预期：观察客户端收到 aaa 和 bbb 两条独立广播")
 
 
 def case2_header_split():
-    print("用例 2：4 字节长度头拆成 2 + 2 两次发，正文再单独发")
-    s = connect()
-    data = pack("ccc")
-    s.sendall(data[0:2])
-    time.sleep(0.5)
-    s.sendall(data[2:4])
-    time.sleep(0.5)
-    s.sendall(data[4:])
-    time.sleep(2)
-    s.close()
-    print("  预期：观察端收到完整的 ccc，不会收到半截乱码")
+    print("用例 2：11 字节协议头和正文分段发送")
+    sock = connect(unique_name("split"))
+    frame = pack(CMD_CHAT, "ccc")
+    sock.sendall(frame[:2])
+    time.sleep(0.2)
+    sock.sendall(frame[2:5])
+    time.sleep(0.2)
+    sock.sendall(frame[5:11])
+    time.sleep(0.2)
+    sock.sendall(frame[11:])
+    time.sleep(1)
+    sock.close()
+    print("预期：观察客户端收到完整的 ccc")
 
 
 def case3_long_body():
-    print("用例 3：正文 3000 字节，拆成 5 次发送")
-    s = connect()
+    print("用例 3：3000 字节正文分 5 段发送")
+    sock = connect(unique_name("long"))
     text = "d" * 3000
-    data = pack(text)
-    step = (len(data) + 4) // 5
-    for i in range(0, len(data), step):
-        s.sendall(data[i:i + step])
-        time.sleep(0.2)
-    time.sleep(3)
-    s.close()
-    print("  预期：观察端收到一条 3000 个 d 的消息")
-    print("        如果只看到 1200 多个 d，说明服务端拼消息的缓冲区太小被截断了")
-
-
-def case5_empty_body():
-    print("用例 5：发一条长度为 0 的消息")
-    s = connect()
-    s.sendall(struct.pack("!I", 0))
-    time.sleep(2)
-    s.close()
-    print("  预期：服务端拒绝这个连接，进程继续活着")
+    frame = pack(CMD_CHAT, text)
+    step = (len(frame) + 4) // 5
+    for offset in range(0, len(frame), step):
+        sock.sendall(frame[offset:offset + step])
+        time.sleep(0.1)
+    time.sleep(1)
+    sock.close()
+    print("预期：观察客户端收到一条包含 3000 个 d 的广播")
 
 
 def case4_huge_length():
-    print("用例 4：谎报 length = 2GB，然后什么都不发")
-    s = connect()
-    s.sendall(struct.pack("!I", 2 * 1024 * 1024 * 1024))
-    time.sleep(2)
-    s.close()
-    print("  预期：服务端拒绝并断开这个连接，进程继续活着")
-    print("        如果服务端崩了（Segmentation fault），说明长度没有做上限校验")
+    print("用例 4：谎报 2GB 正文长度")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(3)
+    sock.connect((HOST, PORT))
+    header = MAGIC + bytes([VERSION]) + struct.pack("!HI", CMD_CHAT, 2 * 1024 * 1024 * 1024)
+    sock.sendall(header)
+    time.sleep(0.5)
+    sock.close()
+    print("预期：服务端拒绝该连接并继续运行")
+
+
+def case5_empty_login():
+    print("用例 5：空昵称登录")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(2)
+    sock.connect((HOST, PORT))
+    sock.sendall(pack(CMD_LOGIN, b""))
+
+    try:
+        _, body = recv_frame(sock)
+        if body not in (b"no", b"login failed,please try again"):
+            raise AssertionError(f"unexpected login response: {body!r}")
+    except (ConnectionError, socket.timeout):
+        pass
+    finally:
+        sock.close()
+
+    print("预期：服务端返回失败或关闭连接")
 
 
 CASES = {
@@ -96,27 +151,24 @@ CASES = {
     "2": case2_header_split,
     "3": case3_long_body,
     "4": case4_huge_length,
-    "5": case5_empty_body,
+    "5": case5_empty_login,
 }
 
-# 第 4 个放最后：它有可能把服务端打挂，之后的用例就没法跑了
 ORDER = ["1", "2", "3", "5", "4"]
 
 
 def main():
-    which = sys.argv[1] if len(sys.argv) > 1 else None
-
-    if which and which not in CASES:
-        print("没有这个用例，可选：", ", ".join(ORDER))
+    selected = sys.argv[1] if len(sys.argv) > 1 else None
+    if selected and selected not in CASES:
+        print("可用用例：", ", ".join(ORDER))
         return 1
 
     for key in ORDER:
-        if which and key != which:
+        if selected and key != selected:
             continue
         CASES[key]()
         print()
-        time.sleep(1)
-
+        time.sleep(0.5)
     return 0
 
 

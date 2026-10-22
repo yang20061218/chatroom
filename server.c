@@ -1,3 +1,8 @@
+/*
+ * Current epoll chat server.
+ * Single-thread event loop with nonblocking accept/read/write and the shared
+ * 11-byte application protocol.
+ */
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
