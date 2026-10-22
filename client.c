@@ -78,6 +78,7 @@ int main()
     exit(EXIT_FAILURE);
     }
     printf("connect server ip: 127.0.0.1 port:7777\n");
+
     char name[MAX_NAMELEN];
     printf("please put in your name\n");
     if(scanf("%31s", name)!=1)
@@ -89,10 +90,9 @@ int main()
     int c;
     while ((c = getchar()) != '\n' && c != EOF) { }
     protocol_send(sockfd,CMD_LOGIN,name);
-    
-    
     char* resp=NULL;
     uint16_t cmd;
+
     int res=protocol_recv(sockfd,&resp,&cmd);
     if (res< 0) {                              
     printf("server closed the connectio\n");
@@ -101,8 +101,8 @@ int main()
     return 1;
 }
 
-    if (cmd != CMD_LOGIN_RES || strncmp(resp, "login success", 13) != 0) {
-    printf("log in failed: %s\n", resp ? resp : "");   
+    if (cmd != CMD_LOGIN_RES || strncmp(resp, "ok",2) != 0) {
+    printf("log in failed: please try again\n");
     free(resp);
     close(sockfd);
     return 1;

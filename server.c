@@ -7,275 +7,435 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <unistd.h>
-#include<signal.h>
-#include<errno.h>
-#include"net.h"
-#include"protocol.h"
-#include<time.h>
+#include <signal.h>
+#include <errno.h>
+#include "net.h"
+#include "protocol.h"
+#include <time.h>
+#include <fcntl.h>
+#include <sys/epoll.h>
 
 #define MAX_CLIENTS 2000
+#define RDBUF_SIZE 4096
+#define WRBUF_SIZE 8192
 
 typedef struct
 {
-    int  fd;
+    int fd;
     char name[MAX_NAMELEN];
     int is_log;
     time_t last_active;
 
-}client;
+    char read_buf[RDBUF_SIZE];
+    ssize_t read_buf_unread;
+    char write_buf[WRBUF_SIZE];
+    ssize_t write_buf_used_unsend;
+
+} client;
 
 client clients[MAX_CLIENTS];
-int clientnum=0;
-static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-int broadcast(char* mes)
-{
-    if (mes == NULL) return -1;
-
-    int clientfds_copy[MAX_CLIENTS];
-    int n = 0;
-
-    pthread_mutex_lock(&mutex);
-    for (int i = 0; i < clientnum; i++) {
-        if (clients[i].is_log) {
-            clientfds_copy[n++] = clients[i].fd;      
-        }
-    }
-    pthread_mutex_unlock(&mutex);
-    for (int i = 0; i < n; i++) {                 
-        protocol_send(clientfds_copy[i], CMD_CHAT, mes);
-    }
-    return 0;
-}
-
-int broadcast_nomyself(char* mes, int fd_myself)
-{
-    if (mes == NULL) return -1;
-
-    int clientfds_copy[MAX_CLIENTS];
-    int n = 0;
-
-    pthread_mutex_lock(&mutex);
-    for (int i = 0; i < clientnum; i++) {
-        if (clients[i].is_log) {
-            clientfds_copy[n++] = clients[i].fd;
-        }
-    }
-    pthread_mutex_unlock(&mutex);
-
-    for (int i = 0; i < n; i++) {
-        if (clientfds_copy[i] == fd_myself) continue;
-        protocol_send(clientfds_copy[i], CMD_CHAT, mes);
-    }
-    return 0;
-}
+int clientnum = 0;
 int client_delet(int fd)
 {
-    int pos=-1;
-    pthread_mutex_lock(&mutex);
-    for(int i=0;i<clientnum;i++){
-        if(clients[i].fd == fd ){
-            pos =i;
+    int pos = -1;
+    for (int i = 0; i < clientnum; i++)
+    {
+        if (clients[i].fd == fd)
+        {
+            pos = i;
             clients[i].fd = 0;
-            for(int p=i+1;p<clientnum;p++){
-                clients[p-1]=clients[p];
+            for (int p = i + 1; p < clientnum; p++)
+            {
+                clients[p - 1] = clients[p];
             }
-            memset(&clients[clientnum-1], 0, sizeof(client));
+            memset(&clients[clientnum - 1], 0, sizeof(client));
             clientnum--;
             break;
         }
     }
-    pthread_mutex_unlock(&mutex);
     return pos;
 }
-int getname(int fd,char* name)
+
+int login(int fd, char *name)
 {
-    name[0]='\0';
-    pthread_mutex_lock(&mutex);
-    for(int i=0;i<clientnum;i++){
-        if(clients[i].fd==fd)
-        {
-            snprintf(name, MAX_NAMELEN, "%s", clients[i].name);
-            break;
-        }    
-    }
-    name[MAX_NAMELEN-1]='\0';
-    pthread_mutex_unlock(&mutex);
-    return 0;
-}
-int login(int fd,char* name)
-{
-    if(name==NULL||strlen(name)>=MAX_NAMELEN) 
+    if (name == NULL || strlen(name) >= MAX_NAMELEN)
     {
         return -1;
     }
-    pthread_mutex_lock(&mutex);
-    int pos=-1;
-     for(int i=0;i<clientnum;i++){
-        if(clients[i].fd==fd) pos=i;
+    int pos = -1;
+    for (int i = 0; i < clientnum; i++)
+    {
+        if (clients[i].fd == fd)
+            pos = i;
     }
-    for(int i=0;i<clientnum;i++){
-        if (i == pos) continue;
-        if (!clients[i].is_log) continue;
-        if(strcmp(clients[i].name,name)==0)
+    for (int i = 0; i < clientnum; i++)
+    {
+        if (i == pos || !clients[i].is_log)
+            continue;
+        if (strcmp(clients[i].name, name) == 0)
         {
-            pthread_mutex_unlock(&mutex);
             return -1;
-        }    
+        }
     }
-    if(pos==-1) {
-        pthread_mutex_unlock(&mutex);
+    if (pos == -1)
+    {
         return -1;
     }
-    strncpy(clients[pos].name,name,MAX_NAMELEN);
-    clients[pos].name[MAX_NAMELEN-1]='\0';
-    clients[pos].is_log = 1;    
-    pthread_mutex_unlock(&mutex);
+    strncpy(clients[pos].name, name, MAX_NAMELEN);
+    clients[pos].name[MAX_NAMELEN - 1] = '\0';
+    clients[pos].is_log = 1;
     return strlen(name);
 }
-void* sendtoall_thread(void* arg)
+int sendtoall(int epollfd, int fd_myself, int pos, char *mes, uint32_t meslen)
 {
-    char *read_buf=NULL;
-    int clientfd=(int)(intptr_t)arg;
-    ssize_t read_len;
-    uint16_t cmd; 
-    char name[MAX_NAMELEN]={0};
-    while(1)
-    {
-        read_len=protocol_recv(clientfd,&read_buf,&cmd);
-        if (read_len<0) {
-            free(read_buf);
-            break;
-        }
-        else if(read_len==0){
-             free(read_buf);
-            read_buf = NULL;
-        }
-        else
-        {
-            switch (cmd)
-            {
-            case CMD_CHAT:
-                {
-                    int logged = 0;
-                    pthread_mutex_lock(&mutex);
-                    for (int i = 0; i < clientnum; i++) {
-                    if (clients[i].fd == clientfd) { 
-                        logged = clients[i].is_log; 
-                        if(logged) clients[i].last_active=time(NULL);
-                        break;
-                    }
-                    }
-                    pthread_mutex_unlock(&mutex);
-                    if (!logged) break;
+    if (epollfd < 0 || pos < 0 || pos >= clientnum)
+        return -1;
 
+    if (mes == NULL || !clients[pos].is_log)
+        return -1;
 
-                char temp[MES_MAX+64];
-                getname(clientfd,name);
-                snprintf(temp, sizeof(temp), "[%s] : %s\n",name,read_buf);
-                broadcast_nomyself(temp,clientfd);
-                break;
-                }
-            case CMD_LOGIN:
-                if(login(clientfd,read_buf)>0)
-                {
-                    protocol_send(clientfd,CMD_LOGIN_RES,"login success");
-                }
-                else
-                {
-                    protocol_send(clientfd,CMD_LOGIN_RES,"login failed,please try again");
-                }
-                break;
-            case CMD_HEART:
-                pthread_mutex_lock(&mutex);
-                for(int i=0;i<clientnum;i++)
-                {
-                    if(clients[i].fd==clientfd)
-                    {
-                        clients[i].last_active=time(NULL);
-                        break;
-                    }
-                }
-                pthread_mutex_unlock(&mutex);
-                break;
-            case CMD_EXIT:
-            free(read_buf);
-                goto done;
-            default:
-            free(read_buf);
-                goto done;
-            }   
-            free(read_buf);      
-        }
-    }
-    done:
-    getname(clientfd,name);
-    client_delet(clientfd);
-    close(clientfd);
-    if(name[0]!='\0'){
-        char temp[256];
-        snprintf(temp, sizeof(temp), "------%s exit------\n",name);
-        broadcast(temp);
-    }
-    return NULL;
-}
-void* checkheartbeat_thread(void* arg)
-{
-    
-    (void)arg;
-    while(1){
-    pthread_mutex_lock(&mutex);
-    for(int i=0;i<clientnum;i++)
+    if (meslen > MES_MAX - MAX_NAMELEN - 16)
+        return -1;
+
+    size_t temp_size = MES_MAX + MAX_NAMELEN + 32;
+    char *temp = malloc(temp_size);
+
+    if (temp == NULL)
+        return -1;
+
+    int temp_len = snprintf(temp, temp_size, "[%s] : %.*s\n", clients[pos].name, (int)meslen, mes);
+
+    if (temp_len < 0 || (size_t)temp_len >= temp_size || (size_t)temp_len > MES_MAX)
     {
-        if(time(NULL)-clients[i].last_active>30&&clients[i].is_log)
+        free(temp);
+        return -1;
+    }
+
+    char *packed = temp;
+    int packed_len = protocol_pack(&packed, CMD_CHAT);
+    free(temp);
+
+    if (packed_len < 0)
+    {
+        return -1;
+    }
+
+    for (int i = 0; i < clientnum; i++)
+    {
+        if (clients[i].fd < 0 || clients[i].fd == fd_myself || !clients[i].is_log)
         {
-            shutdown(clients[i].fd,SHUT_RDWR);
+            continue;
         }
-        else if(time(NULL)-clients[i].last_active>60&&!clients[i].is_log)
+
+        size_t write_used = (size_t)clients[i].write_buf_used_unsend;
+
+        if (write_used > WRBUF_SIZE || (size_t)packed_len > WRBUF_SIZE - write_used)
         {
-            shutdown(clients[i].fd,SHUT_RDWR);
+            continue;
+        }
+
+        memcpy(clients[i].write_buf + write_used, packed, (size_t)packed_len);
+        clients[i].write_buf_used_unsend += packed_len;
+
+        struct epoll_event ev;
+        memset(&ev, 0, sizeof(ev));
+        ev.data.fd = clients[i].fd;
+        ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
+
+        if (epoll_ctl(epollfd, EPOLL_CTL_MOD, clients[i].fd, &ev) < 0)
+        {
+            free(packed);
+            return -1;
         }
     }
-    pthread_mutex_unlock(&mutex);
-    sleep(5);
-}
-    return NULL;
+
+    free(packed);
+    return 0;
 }
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
-    int serverfd=tcp_listen("0.0.0.0",7777,100);
-    if(serverfd==-1)
+
+    int listenfd = tcp_listen("0.0.0.0", 7777, 100);
+    if (listenfd == -1)
     {
         exit(EXIT_FAILURE);
     }
-    pthread_t pid_checkheartbeat;
-    pthread_create(&pid_checkheartbeat,NULL,checkheartbeat_thread,NULL);
-    pthread_detach(pid_checkheartbeat);
-    while(1)
-    {
-        pthread_t pid_sendtoall;
-        int fd=tcp_accept(serverfd,NULL);
-        if(fd<0)
-        {
-            perror("accept");
-            continue;
-        }           
-        pthread_mutex_lock(&mutex);
-        if(clientnum>=MAX_CLIENTS)
-        {
-            fprintf(stderr, "system is full,refuse client: fd=%d\n", fd);
-            close(fd); 
-            pthread_mutex_unlock(&mutex);          
-            continue;             
-        }
-        clients[clientnum].fd = fd;
-        clients[clientnum].last_active=time(NULL);
-        clientnum++;
-        pthread_mutex_unlock(&mutex);
 
-        pthread_create(&pid_sendtoall,NULL,sendtoall_thread,(void*)(intptr_t)fd);
-        pthread_detach(pid_sendtoall);
+    int flag = fcntl(listenfd, F_GETFL);
+    flag |= O_NONBLOCK;
+    fcntl(listenfd, F_SETFL, flag);
+
+    int epollfd = epoll_create(1);
+    if (epollfd < 0)
+    {
+        perror("epoll");
+        exit(EXIT_FAILURE);
     }
-    close(serverfd);
+    struct epoll_event ev;
+    struct epoll_event events_todo[MAX_CLIENTS + 1];
+    ev.data.fd = listenfd;
+    ev.events = EPOLLIN;
+    epoll_ctl(epollfd, EPOLL_CTL_ADD, listenfd, &ev);
+
+    while (1)
+    {
+        int wait_res = epoll_wait(epollfd, events_todo, MAX_CLIENTS, 1000);
+        if (wait_res < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            break;
+        }
+        for (int i = 0; i < wait_res; i++)
+        {
+            int fd = events_todo[i].data.fd;
+            if (fd == listenfd)
+            {
+                while (1)
+                {
+                    if (clientnum == MAX_CLIENTS)
+                    {
+                        printf("system is full\n");
+                        break;
+                    }
+                    int clientfd = accept(listenfd, NULL, NULL);
+                    if (clientfd < 0)
+                    {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK)
+                        {
+                            break;
+                        }
+                        if (errno == EINTR)
+                            continue;
+                        perror("accept");
+                        continue;
+                    }
+                    int flag = fcntl(clientfd, F_GETFL);
+                    flag |= O_NONBLOCK;
+                    fcntl(clientfd, F_SETFL, flag);
+                    ev.data.fd = clientfd;
+                    ev.events = EPOLLIN | EPOLLET;
+                    int res = epoll_ctl(epollfd, EPOLL_CTL_ADD, clientfd, &ev);
+                    if (res < 0)
+                    {
+                        close(clientfd);
+                        break;
+                    }
+                    clients[clientnum].fd = clientfd;
+                    clients[clientnum].is_log = 0;
+                    clients[clientnum].read_buf_unread = 0;
+                    clients[clientnum].write_buf_used_unsend = 0;
+                    clients[clientnum].last_active = time(NULL);
+                    clientnum++;
+                }
+            }
+            else if (events_todo[i].events & EPOLLIN)
+            {
+                int pos = -1;
+                for (int j = 0; j < clientnum; j++)
+                {
+                    if (clients[j].fd == fd)
+                    {
+                        pos = j;
+                        break;
+                    }
+                }
+                if (pos < 0)
+                    continue;
+                char buf[1024];
+                while (1)
+                {
+                    int closed = 0;
+                    ssize_t res = recv(fd, buf, 1023, 0);
+                    if (res < 0)
+                    {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK)
+                        {
+                            break;
+                        }
+                        if (errno == EINTR)
+                            continue;
+                        perror("read");
+                        client_delet(fd);
+                        epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, NULL);
+                        close(fd);
+                        break;
+                    }
+                    if (res == 0)
+                    {
+                        epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, NULL);
+                        client_delet(fd);
+                        close(fd);
+                        break;
+                    }
+                    if (res > RDBUF_SIZE - clients[pos].read_buf_unread)
+                    {
+                        client_delet(fd);
+                        epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, NULL);
+                        close(fd);
+                        break;
+                    }
+                    memcpy(clients[pos].read_buf + clients[pos].read_buf_unread, buf, res);
+                    clients[pos].read_buf_unread += res;
+                    clients[pos].last_active = time(NULL);
+                    while (1)
+                    {
+                        uint16_t cmd;
+                        uint32_t len;
+                        if (clients[pos].read_buf_unread < HEAD_LEN)
+                        {
+                            break;
+                        }
+                        int res = protocol_unpack(clients[pos].read_buf, HEAD_LEN, &cmd, &len);
+                        if (res < 0 || len > RDBUF_SIZE - HEAD_LEN)
+                        {
+                            closed = 1;
+                            break;
+                        }
+                        else if ((size_t)clients[pos].read_buf_unread < len + HEAD_LEN)
+                        {
+                            break;
+                        }
+                        switch (cmd)
+                        {
+                        case CMD_CHAT:
+                            if (sendtoall(epollfd, fd, pos, clients[pos].read_buf + HEAD_LEN, len))
+                            {
+                                closed = 1;
+                            }
+                            break;
+                        case CMD_EXIT:
+                            closed = 1;
+                            break;
+                        case CMD_HEART:
+                            clients[pos].last_active = time(NULL);
+                            break;
+                        case CMD_LOGIN:
+                            if (len == 0 || len >= MAX_NAMELEN)
+                            {
+                                closed = 1;
+                                break;
+                            }
+                            int meslen;
+                            char name[MAX_NAMELEN];
+                            memcpy(name, clients[pos].read_buf + HEAD_LEN, len);
+                            name[len] = '\0';
+                            char *mes = login(fd, name) < 0 ? "no" : "ok";
+                            meslen = protocol_pack(&mes, CMD_LOGIN_RES);
+                            if (meslen < 0)
+                            {
+                                closed = 1;
+                                break;
+                            }
+                            if (clients[pos].write_buf_used_unsend > WRBUF_SIZE || meslen > WRBUF_SIZE - clients[pos].write_buf_used_unsend)
+                            {
+                                free(mes);
+                                closed = 1;
+                                break;
+                            }
+                            memcpy(clients[pos].write_buf + clients[pos].write_buf_used_unsend, mes, meslen);
+                            clients[pos].write_buf_used_unsend += meslen;
+                            free(mes);
+                            memset(&ev, 0, sizeof(ev));
+                            ev.data.fd = clients[pos].fd;
+                            ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
+                            if (epoll_ctl(epollfd, EPOLL_CTL_MOD, clients[pos].fd, &ev) < 0)
+                            {
+                                closed = 1;
+                            }
+                            clients[pos].last_active = time(NULL);
+                            break;
+                        default:
+                            closed = 1;
+                            break;
+                        }
+                        if (closed)
+                        {
+                            epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, NULL);
+                            client_delet(fd);
+                            close(fd);
+                            break;
+                        }
+                        memmove(clients[pos].read_buf, clients[pos].read_buf + HEAD_LEN + len, clients[pos].read_buf_unread - HEAD_LEN - len);
+                        clients[pos].read_buf_unread -= HEAD_LEN + len;
+                    }
+                    if (closed)
+                    {
+                        break;
+                    }
+                }
+            }
+            if (events_todo[i].events & EPOLLOUT)
+            {
+                int pos = -1;
+                for (int j = 0; j < clientnum; j++)
+                {
+                    if (clients[j].fd == fd)
+                    {
+                        pos = j;
+                        break;
+                    }
+                }
+                if (pos < 0)
+                    continue;
+                int closed = 0;
+                while (clients[pos].write_buf_used_unsend > 0)
+                {
+                    int res = send(clients[pos].fd, clients[pos].write_buf, clients[pos].write_buf_used_unsend, 0);
+                    if (res < 0)
+                    {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK)
+                        {
+                            closed = 0;
+                            break;
+                        }
+                        if (errno == EINTR)
+                            continue;
+                        perror("send");
+
+                        closed = 1;
+                        break;
+                    }
+                    if (res == 0)
+                    {
+                        closed = 1;
+                        break;
+                    }
+                    else
+                    {
+                        memmove(clients[pos].write_buf, clients[pos].write_buf + res, clients[pos].write_buf_used_unsend - res);
+                        clients[pos].write_buf_used_unsend -= res;
+                    }
+                }
+                if (closed)
+                {
+                    client_delet(fd);
+                    epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, NULL);
+                    close(fd);
+                    continue;
+                }
+                if (clients[pos].write_buf_used_unsend == 0)
+                {
+                    memset(&ev, 0, sizeof(ev));
+                    ev.data.fd = clients[pos].fd;
+                    ev.events = EPOLLIN | EPOLLET;
+                    if (epoll_ctl(epollfd, EPOLL_CTL_MOD, clients[pos].fd, &ev) < 0)
+                    {
+                        epoll_ctl(epollfd,EPOLL_CTL_DEL,clients[pos].fd,NULL);
+                        client_delet(clients[pos].fd);
+                        close(clients[pos].fd);
+                    }
+                }
+                else
+                {
+                    continue;
+                }
+            }
+        }
+    }
+    close(listenfd);
     return 0;
 }
