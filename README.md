@@ -1,6 +1,6 @@
 # Linux epoll 聊天室
 
-> 文档状态：2026-10-22，根目录为当前 epoll 主实现，`multithread/` 为历史归档。
+> 文档状态：2026-10-24，根目录为当前 epoll 主实现，`multithread/` 为历史归档。
 
 用 C 写的 TCP 聊天室。当前主版本位于仓库根目录，采用单线程 `epoll` 事件循环；旧的多线程实现保留在 `multithread/`，用于对照两种并发模型。
 
@@ -23,7 +23,10 @@
 - 每条连接独立的读写缓冲区
 - `EPOLLOUT` 驱动部分发送
 - 非阻塞 `accept`、`recv` 和 `send`
-- 客户端心跳与服务端活跃时间更新
+- 客户端心跳与 30 秒/60 秒超时清理
+- 已登录用户退出广播
+- 统一 `client_close` 管理 fd、epoll 和连接数组
+- 读、解析、业务、写入和超时逻辑已拆成独立函数
 - 连接数上限保护
 
 ## 协议
@@ -163,6 +166,24 @@ gcc -Wall -Wextra -g -o client client.c net.c protocol.c -lpthread
 
 **聊天**：服务端只打包一次 `[昵称] : 正文`，再把同一帧写入其他已登录客户端的写缓冲区，跳过发送者自身。
 
+### 核心函数职责
+
+```text
+set_nonblocking         设置非阻塞 fd
+update_interest         根据写缓冲区维护 EPOLLIN/EPOLLOUT
+find_client             按 fd 查找连接位置
+accept_clients          接受新连接并注册 epoll
+client_write_buf_add    完整协议帧进入写缓冲区
+sendtoall               格式化和广播聊天消息
+broadcast               广播系统消息
+handle_message          处理登录、聊天、心跳和退出
+process_messages        从读缓冲区解析完整协议帧
+client_read             循环读取 socket 并调用解析
+client_write            循环发送写缓冲区
+client_close            统一关闭连接、删除数组并广播退出
+check_timeout           清理心跳超时连接
+```
+
 ## 旧的多线程实现
 
 `multithread/` 是最初的一连接一线程版本：
@@ -179,8 +200,8 @@ gcc -Wall -Wextra -g -o client client.c net.c protocol.c -lpthread
 
 - `protocol_pack` 使用 `strlen` 计算正文长度，只支持文本消息
 - epoll 服务端读缓冲区为 4 KB，超过该长度的消息会被拒绝
-- 连接关闭流程仍有重复代码，尚未统一封装
-- 退出广播、错误事件处理和完整超时清理尚未完成
+- 尚未处理 `EPOLLERR`、`EPOLLHUP` 和 `EPOLLRDHUP`
+- 写缓冲区满时会跳过该接收者，尚未实现慢客户端关闭策略
 - 尚未完成慢客户端、异常断开和 1000 连接压测
 - 多线程版本每连接一个线程，不适合把连接数堆得很高
 
@@ -192,8 +213,9 @@ gcc -Wall -Wextra -g -o client client.c net.c protocol.c -lpthread
 - [x] epoll 单线程事件循环
 - [x] 非阻塞读写和连接级缓冲区
 - [x] 写缓冲区与 `EPOLLOUT`
-- [ ] 统一连接关闭函数
-- [ ] 退出广播与错误事件处理
+- [x] 统一连接关闭函数
+- [x] 退出广播与心跳超时清理
+- [ ] `EPOLLERR/HUP/RDHUP` 错误事件处理
 - [ ] 半包、粘包、慢客户端自动化测试
 - [ ] 1000 连接压测
 - [ ] C++ Reactor 重构
