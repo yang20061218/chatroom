@@ -1,6 +1,6 @@
 # Linux epoll 聊天室
 
-> 文档状态：2026-10-24，根目录为当前 epoll 主实现，`multithread/` 为历史归档。
+> 文档状态：2026-10-25，根目录为当前 epoll 主实现，`multithread/` 为历史归档。
 
 用 C 写的 TCP 聊天室。当前主版本位于仓库根目录，采用单线程 `epoll` 事件循环；旧的多线程实现保留在 `multithread/`，用于对照两种并发模型。
 
@@ -26,6 +26,7 @@
 - 客户端心跳与 30 秒/60 秒超时清理
 - 已登录用户退出广播
 - 统一 `client_close` 管理 fd、epoll 和连接数组
+- 处理 `EPOLLERR`、`EPOLLHUP` 和 `EPOLLRDHUP` 异常断开
 - 读、解析、业务、写入和超时逻辑已拆成独立函数
 - 连接数上限保护
 
@@ -162,6 +163,8 @@ gcc -Wall -Wextra -g -o client client.c net.c protocol.c -lpthread
 
 **发送**：业务层只把完整协议帧复制进目标连接的写缓冲区，并注册 `EPOLLOUT`。可写事件中循环发送，遇到 `EAGAIN` 保留剩余数据；全部发完后取消 `EPOLLOUT`。
 
+**异常断开**：客户端事件包含 `EPOLLRDHUP`，服务端同时处理 `EPOLLERR`、`EPOLLHUP` 和 `EPOLLRDHUP`。读事件先尽量读取剩余数据，异常或挂断事件最后统一进入 `client_close`。
+
 **登录**：`CMD_LOGIN` 的 payload 按长度复制并补 `\0`，然后执行重名检查和昵称保存。登录结果打包后进入写缓冲区。
 
 **聊天**：服务端只打包一次 `[昵称] : 正文`，再把同一帧写入其他已登录客户端的写缓冲区，跳过发送者自身。
@@ -200,7 +203,6 @@ check_timeout           清理心跳超时连接
 
 - `protocol_pack` 使用 `strlen` 计算正文长度，只支持文本消息
 - epoll 服务端读缓冲区为 4 KB，超过该长度的消息会被拒绝
-- 尚未处理 `EPOLLERR`、`EPOLLHUP` 和 `EPOLLRDHUP`
 - 写缓冲区满时会跳过该接收者，尚未实现慢客户端关闭策略
 - 尚未完成慢客户端、异常断开和 1000 连接压测
 - 多线程版本每连接一个线程，不适合把连接数堆得很高
@@ -215,7 +217,7 @@ check_timeout           清理心跳超时连接
 - [x] 写缓冲区与 `EPOLLOUT`
 - [x] 统一连接关闭函数
 - [x] 退出广播与心跳超时清理
-- [ ] `EPOLLERR/HUP/RDHUP` 错误事件处理
+- [x] `EPOLLERR/HUP/RDHUP` 错误事件处理
 - [ ] 半包、粘包、慢客户端自动化测试
 - [ ] 1000 连接压测
 - [ ] C++ Reactor 重构

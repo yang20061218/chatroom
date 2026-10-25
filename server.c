@@ -61,7 +61,7 @@ int update_interest(int epollfd, int pos)
     {
         memset(&ev, 0, sizeof(ev));
         ev.data.fd = clients[pos].fd;
-        ev.events = EPOLLIN | EPOLLET;
+        ev.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
         if (epoll_ctl(epollfd, EPOLL_CTL_MOD, clients[pos].fd, &ev) < 0)
         {
             return -1;
@@ -71,7 +71,7 @@ int update_interest(int epollfd, int pos)
     {
         memset(&ev, 0, sizeof(ev));
         ev.data.fd = clients[pos].fd;
-        ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
+        ev.events = EPOLLIN | EPOLLOUT | EPOLLET | EPOLLRDHUP;
         if (epoll_ctl(epollfd, EPOLL_CTL_MOD, clients[pos].fd, &ev) < 0)
         {
             return -1;
@@ -307,7 +307,7 @@ int accept_clients(int epollfd, int listenfd)
         struct epoll_event ev;
         memset(&ev, 0, sizeof(ev));
         ev.data.fd = clientfd;
-        ev.events = EPOLLIN | EPOLLET;
+        ev.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
         if (epoll_ctl(epollfd, EPOLL_CTL_ADD, clientfd, &ev) < 0)
         {
             close(clientfd);
@@ -528,12 +528,17 @@ int main()
             int fd = events_todo[i].data.fd;
             if (fd == listenfd)
             {
+                if (events_todo[i].events & (EPOLLERR | EPOLLHUP))
+                {
+                    exit(EXIT_FAILURE);
+                }
                 if (accept_clients(epollfd, listenfd) < 0)
                 {
                     printf("accept clients failed\n");
                 }
+                continue;
             }
-            else if (events_todo[i].events & EPOLLIN)
+            if (events_todo[i].events & EPOLLIN)
             {
                 int pos = find_client(fd);
                 if (pos < 0)
@@ -558,6 +563,15 @@ int main()
                     client_close(epollfd, pos);
                     continue;
                 }
+            }
+            if (events_todo[i].events & (EPOLLERR | EPOLLRDHUP | EPOLLHUP))
+            {
+                int pos = find_client(fd);
+                if (pos >= 0)
+                {
+                    client_close(epollfd, pos);
+                }
+                continue;
             }
         }
         check_timeout(epollfd);
