@@ -415,7 +415,13 @@ int client_read(int epollfd, int pos)
     char buf[1024];
     while (1)
     {
-        ssize_t res = recv(fd, buf, 1023, 0);
+        size_t space = RDBUF_SIZE - (size_t)clients[pos].read_buf_unread;
+        size_t want = sizeof(buf);
+        if (want > space)
+        {
+            want = space;
+        }
+        ssize_t res = recv(fd, buf, want, 0);
         if (res < 0)
         {
             if (errno == EAGAIN || errno == EWOULDBLOCK)

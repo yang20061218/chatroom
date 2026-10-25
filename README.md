@@ -136,7 +136,9 @@ gcc -Wall -Wextra -g -o client client.c net.c protocol.c -lpthread
 ├── protocol.c        协议打包与解析
 ├── protocol.h        协议常量与函数声明
 ├── Makefile
-├── test_sticky.py    粘包测试脚本
+├── test_sticky.py    协议半包和粘包测试
+├── test_load.py      多客户端登录和广播负载测试
+├── test_slow_client.py 慢客户端背压测试
 └── multithread/
     ├── server.c      一连接一线程服务端
     ├── client.c
@@ -150,6 +152,35 @@ gcc -Wall -Wextra -g -o client client.c net.c protocol.c -lpthread
 ```
 
 每个文件的职责都在上面的目录说明和 [multithread/README.md](multithread/README.md) 中列出。
+
+## 测试脚本
+
+服务端启动在 `127.0.0.1:7777` 后，可以运行：
+
+```bash
+python3 test_sticky.py 1
+python3 test_load.py
+python3 test_slow_client.py
+```
+
+- `test_sticky.py`：验证半包、粘包、登录和超长长度
+- `test_load.py`：验证 100 个登录客户端和广播帧数量
+- `test_slow_client.py`：验证一个不读取数据的慢客户端不会阻塞服务端
+
+## 测试结果
+
+测试环境为 Ubuntu 虚拟机，服务端监听 `127.0.0.1:7777`。
+
+- `WERROR` 编译通过
+- 登录、重复昵称和双客户端聊天通过
+- 11 字节协议、半包和粘包测试通过
+- 1000 个空闲并发连接保持 10 秒，批量关闭后服务端继续运行
+- 100 个登录客户端、10 个发送者、50 条聊天消息，4950 个广播帧送达
+- `kill -9` 和 `kill -STOP` 心跳超时测试通过
+- 慢客户端测试通过，服务端对其他客户端和新连接保持响应
+- ASan/UBSan 负载测试未报告内存错误
+
+当前写缓冲区为固定大小。高速发送且接收端来不及读取时会发生背压丢帧，后续需要通过有上限的发送队列或慢客户端关闭策略解决。
 
 ## epoll 服务端设计
 
