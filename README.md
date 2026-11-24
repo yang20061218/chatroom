@@ -1,17 +1,19 @@
 # Linux epoll 聊天室
 
-> 文档状态：2026-10-25，根目录为当前 epoll 主实现，`multithread/` 为历史归档。
+> 文档状态：2026-11-24，项目已完结。仓库只保留最终单线程 epoll 实现。
 
-用 C 写的 TCP 聊天室。当前主版本位于仓库根目录，采用单线程 `epoll` 事件循环；旧的多线程实现保留在 `multithread/`，用于对照两种并发模型。
+用 C 写的 TCP 聊天室，已完成协议、登录、广播、心跳、异常断开、背压和负载测试。最终版本采用单线程 `epoll` 事件循环。
 
-## 仓库版本
+## 项目状态
 
-| 位置 | 实现 | 状态 |
-| --- | --- | --- |
-| 仓库根目录 | 单线程 `epoll` 事件循环 | 当前主版本 |
-| `multithread/` | 一连接一线程 | 历史版本，保留对照 |
+项目已完结，当前版本达到以下学习和演示目标：
 
-两个版本共用相同的客户端、11 字节应用层协议和基础网络函数。
+- 自定义协议与 TCP 半包、粘包处理
+- `epoll + EPOLLET + EPOLLOUT` 事件驱动网络层
+- 登录、广播、心跳超时和统一连接关闭
+- 慢客户端背压和新连接可用性验证
+- 1000 个空闲并发连接测试
+- ASan/UBSan 负载测试
 
 ## 当前功能
 
@@ -81,13 +83,6 @@ make
 make WERROR=-Werror
 ```
 
-编译旧的多线程版本：
-
-```bash
-make -C multithread
-make -C multithread WERROR=-Werror
-```
-
 手动编译当前版本：
 
 ```bash
@@ -115,13 +110,6 @@ gcc -Wall -Wextra -g -o client client.c net.c protocol.c -lpthread
 [昵称] : 内容
 ```
 
-运行旧的多线程版本：
-
-```bash
-./multithread/server
-./multithread/client
-```
-
 ## 目录结构
 
 ```text
@@ -138,20 +126,8 @@ gcc -Wall -Wextra -g -o client client.c net.c protocol.c -lpthread
 ├── Makefile
 ├── test_sticky.py    协议半包和粘包测试
 ├── test_load.py      多客户端登录和广播负载测试
-├── test_slow_client.py 慢客户端背压测试
-└── multithread/
-    ├── server.c      一连接一线程服务端
-    ├── client.c
-    ├── net.c
-    ├── net.h
-    ├── protocol.c
-    ├── protocol.h
-    ├── Makefile
-    ├── test_sticky.py
-    └── README.md
+└── test_slow_client.py 慢客户端背压测试
 ```
-
-每个文件的职责都在上面的目录说明和 [multithread/README.md](multithread/README.md) 中列出。
 
 ## 测试脚本
 
@@ -218,27 +194,14 @@ client_close            统一关闭连接、删除数组并广播退出
 check_timeout           清理心跳超时连接
 ```
 
-## 旧的多线程实现
-
-`multithread/` 是最初的一连接一线程版本：
-
-- 每个连接对应一个独立线程
-- 读循环可以直接使用阻塞式 `protocol_recv`
-- 广播前复制在线 fd 快照
-- 心跳由单独线程检查
-- 连接数组由互斥锁保护
-
-保留这个目录是为了观察阻塞模型到事件驱动模型的差异，不作为后续主要开发方向。
-
 ## 已知限制
 
 - `protocol_pack` 使用 `strlen` 计算正文长度，只支持文本消息
 - epoll 服务端读缓冲区为 4 KB，超过该长度的消息会被拒绝
-- 写缓冲区满时会跳过该接收者，尚未实现慢客户端关闭策略
-- 尚未完成慢客户端、异常断开和 1000 连接压测
-- 多线程版本每连接一个线程，不适合把连接数堆得很高
+- 写缓冲区满时会跳过该接收者，属于当前背压策略
+- 未实现认证、TLS、聊天记录持久化和数据库接入
 
-## 后续计划
+## 完成清单
 
 - [x] 自定义协议与粘包处理
 - [x] 登录、昵称与聊天广播
@@ -249,9 +212,9 @@ check_timeout           清理心跳超时连接
 - [x] 统一连接关闭函数
 - [x] 退出广播与心跳超时清理
 - [x] `EPOLLERR/HUP/RDHUP` 错误事件处理
-- [ ] 半包、粘包、慢客户端自动化测试
-- [ ] 1000 连接压测
-- [ ] C++ Reactor 重构
+- [x] 半包、粘包、慢客户端自动化测试
+- [x] 1000 连接压测
+- [ ] C++ Reactor 重构（不纳入本项目完结范围）
 
 ## 环境
 
