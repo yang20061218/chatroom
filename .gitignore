@@ -5,6 +5,8 @@ server
 client
 chat_server
 chat_client
+build/
+cmake-build-*/
 *.o
 *.out
 *.exe

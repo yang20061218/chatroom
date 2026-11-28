@@ -57,37 +57,32 @@
 ## 分层
 
 ```text
-server.c / client.c     业务层
+src/server.c / src/client.c     业务层
        ↓
-protocol.c              协议打包与解析
+src/protocol.c                  协议打包与解析
        ↓
-net.c                   建连与 socket 基础操作
+src/net.c                       建连与 socket 基础操作
 ```
 
-- `net.c` 负责监听、连接和 fd
-- `protocol.c` 负责 11 字节头和正文
-- `server.c` 负责连接状态、登录、广播和 epoll 事件
-- `client.c` 保持阻塞式读写，因此服务端事件循环不会影响客户端原有交互
+- `src/net.c` 负责监听、连接和 fd
+- `src/protocol.c` 负责 11 字节头和正文
+- `src/server.c` 负责连接状态、登录、广播和 epoll 事件
+- `src/client.c` 保持阻塞式读写，因此服务端事件循环不会影响客户端原有交互
 
 ## 编译
 
-编译当前 epoll 版本：
+使用 CMake 编译：
 
 ```bash
-make
+cmake -S . -B build
+cmake --build build -j
 ```
 
-严格模式：
+生成文件：
 
-```bash
-make WERROR=-Werror
-```
-
-手动编译当前版本：
-
-```bash
-gcc -Wall -Wextra -g -o server server.c net.c protocol.c
-gcc -Wall -Wextra -g -o client client.c net.c protocol.c -lpthread
+```text
+build/app/server
+build/app/client
 ```
 
 ## 运行
@@ -95,13 +90,13 @@ gcc -Wall -Wextra -g -o client client.c net.c protocol.c -lpthread
 启动 epoll 服务端：
 
 ```bash
-./server
+./build/app/server
 ```
 
 另开终端启动客户端：
 
 ```bash
-./client
+./build/app/client
 ```
 
 客户端启动后输入昵称，登录成功后发送消息，其他在线用户会看到：
@@ -117,16 +112,19 @@ gcc -Wall -Wextra -g -o client client.c net.c protocol.c -lpthread
 ├── README.md         项目总说明
 ├── .gitignore        Git 忽略规则
 ├── .gitattributes    Git 换行规则
-├── server.c          当前 epoll 服务端
-├── client.c          客户端
-├── net.c             网络基础函数
-├── net.h
-├── protocol.c        协议打包与解析
-├── protocol.h        协议常量与函数声明
-├── Makefile
-├── test_sticky.py    协议半包和粘包测试
-├── test_load.py      多客户端登录和广播负载测试
-└── test_slow_client.py 慢客户端背压测试
+├── CMakeLists.txt    CMake 构建配置
+├── include/
+│   ├── net.h         网络基础函数声明
+│   └── protocol.h    协议常量与函数声明
+├── src/
+│   ├── server.c      epoll 服务端
+│   ├── client.c      客户端
+│   ├── net.c         网络基础函数
+│   └── protocol.c    协议打包与解析
+└── tests/
+    ├── test_sticky.py    协议半包和粘包测试
+    ├── test_load.py      多客户端登录和广播负载测试
+    └── test_slow_client.py 慢客户端背压测试
 ```
 
 ## 测试脚本
@@ -134,9 +132,9 @@ gcc -Wall -Wextra -g -o client client.c net.c protocol.c -lpthread
 服务端启动在 `127.0.0.1:7777` 后，可以运行：
 
 ```bash
-python3 test_sticky.py 1
-python3 test_load.py
-python3 test_slow_client.py
+python3 tests/test_sticky.py 1
+python3 tests/test_load.py
+python3 tests/test_slow_client.py
 ```
 
 - `test_sticky.py`：验证半包、粘包、登录和超长长度
@@ -147,7 +145,7 @@ python3 test_slow_client.py
 
 测试环境为 Ubuntu 虚拟机，服务端监听 `127.0.0.1:7777`。
 
-- `WERROR` 编译通过
+- CMake 构建通过
 - 登录、重复昵称和双客户端聊天通过
 - 11 字节协议、半包和粘包测试通过
 - 1000 个空闲并发连接保持 10 秒，批量关闭后服务端继续运行
